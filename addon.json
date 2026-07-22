@@ -1,0 +1,10 @@
+{
+	"title": "Weapon Holster — Reworked Edition",
+	"type": "weapon",
+	"tags": ["roleplay", "realism"],
+	"ignore": [
+		"*.md",
+		".git/*",
+		".github/*"
+	]
+}
