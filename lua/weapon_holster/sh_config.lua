@@ -69,62 +69,62 @@ end
 WH.Slots = {
 	-- Long guns slung diagonally on the back.
 	back = {
-		label = "Back (right)",
+		label = "Dos (droite)",
 		bone  = "ValveBiped.Bip01_R_Clavicle",
 		pos   = Vector(13, 4, 5),
 		ang   = Angle(90, 0, 100),
 	},
 	back_left = {
-		label = "Back (left)",
+		label = "Dos (gauche)",
 		bone  = "ValveBiped.Bip01_L_Clavicle",
 		pos   = Vector(-13, 4, 5),
 		ang   = Angle(90, 0, -100),
 	},
 	-- SMGs lower on the back / small of the back.
 	back_low = {
-		label = "Lower back",
+		label = "Bas du dos",
 		bone  = "ValveBiped.Bip01_Spine1",
 		pos   = Vector(5, 0, -5),
 		ang   = Angle(0, 0, 230),
 	},
 	-- Long gun slung across the FRONT torso (RP mode).
 	chest_sling = {
-		label = "Chest sling",
+		label = "Sangle torse",
 		bone  = "ValveBiped.Bip01_Spine2",
 		pos   = Vector(7, 1, 8),
 		ang   = Angle(85, 15, 100),
 	},
 	-- Sidearm on the right hip.
 	hip_right = {
-		label = "Right hip",
+		label = "Hanche droite",
 		bone  = "ValveBiped.Bip01_Pelvis",
 		pos   = Vector(1, -8, -4),
 		ang   = Angle(5, 270, 0),
 	},
 	-- Sidearm on the left hip.
 	hip_left = {
-		label = "Left hip",
+		label = "Hanche gauche",
 		bone  = "ValveBiped.Bip01_Pelvis",
 		pos   = Vector(1, 8, -4),
 		ang   = Angle(5, 90, 0),
 	},
 	-- Chest holster (RP sidearm).
 	chest_holster = {
-		label = "Chest holster",
+		label = "Holster poitrine",
 		bone  = "ValveBiped.Bip01_Spine2",
 		pos   = Vector(9, -3, 2),
 		ang   = Angle(0, 250, 20),
 	},
 	-- Grenades / equipment on the front belt.
 	belt = {
-		label = "Belt",
+		label = "Ceinture",
 		bone  = "ValveBiped.Bip01_Pelvis",
 		pos   = Vector(3, -5, 6),
 		ang   = Angle(-95, 0, 0),
 	},
 	-- Melee weapon across the lower back.
 	melee_back = {
-		label = "Back (melee)",
+		label = "Dos (mêlée)",
 		bone  = "ValveBiped.Bip01_Spine1",
 		pos   = Vector(3, 0, 0),
 		ang   = Angle(0, 0, 45),

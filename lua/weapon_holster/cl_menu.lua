@@ -70,12 +70,13 @@ local function SectionLabel(parent, text)
 	return l
 end
 
--- Compact labelled slider that writes straight into a target table field.
-local function SliderRow(parent, text, min, max, decimals, getf, setf)
+-- Compact labelled slider with fine −/+ nudge buttons for precise control.
+-- `step` is how much the nudge buttons move the value.
+local function SliderRow(parent, text, min, max, decimals, step, getf, setf)
 	local row = vgui.Create("DPanel", parent)
 	row:Dock(TOP)
 	row:DockMargin(0, 2, 0, 2)
-	row:SetTall(38)
+	row:SetTall(42)
 	row.Paint = function() end
 
 	local s = vgui.Create("DNumSlider", row)
@@ -91,6 +92,24 @@ local function SliderRow(parent, text, min, max, decimals, getf, setf)
 	s.OnValueChanged = function(_, val)
 		setf(val)
 	end
+
+	local function nudge(delta)
+		local v = math.Clamp((getf() or 0) + delta, min, max)
+		s:SetValue(v)
+	end
+
+	local plus = StyledButton(row, "+", COL.panel2)
+	plus:Dock(RIGHT)
+	plus:DockMargin(2, 6, 0, 6)
+	plus:SetWide(28)
+	plus.DoClick = function() nudge(step) end
+
+	local minus = StyledButton(row, "−", COL.panel2)
+	minus:Dock(RIGHT)
+	minus:DockMargin(2, 6, 0, 6)
+	minus:SetWide(28)
+	minus.DoClick = function() nudge(-step) end
+
 	row.Slider = s
 	return s
 end
@@ -98,10 +117,21 @@ end
 --------------------------------------------------------------------------------
 -- Fonts
 --------------------------------------------------------------------------------
-surface.CreateFont("WH_Title",     { font = "Roboto", size = 22, weight = 600 })
-surface.CreateFont("WH_Font",      { font = "Roboto", size = 17, weight = 500 })
-surface.CreateFont("WH_FontSmall", { font = "Roboto", size = 14, weight = 500 })
-surface.CreateFont("WH_FontBadge", { font = "Roboto", size = 12, weight = 600 })
+surface.CreateFont("WH_Title",     { font = "Roboto", size = 26, weight = 600 })
+surface.CreateFont("WH_Font",      { font = "Roboto", size = 19, weight = 500 })
+surface.CreateFont("WH_FontSmall", { font = "Roboto", size = 16, weight = 500 })
+surface.CreateFont("WH_FontBadge", { font = "Roboto", size = 13, weight = 600 })
+
+--------------------------------------------------------------------------------
+-- Flat-white material used to draw the outline/silhouette around the weapon so
+-- dark weapons stay visible against the dark preview background.
+--------------------------------------------------------------------------------
+local OUTLINE_MAT = CreateMaterial("wh_outline_white", "UnlitGeneric", {
+	["$basetexture"] = "color/white",
+	["$model"]       = "1",
+	["$color"]       = "[1 1 1]",
+	["$ignorez"]     = "0",
+})
 
 --------------------------------------------------------------------------------
 -- State
@@ -143,6 +173,10 @@ local function BuildPreview(parent)
 	mdl:DockMargin(0, 0, 0, 0)
 	mdl:SetModel(LocalPlayer():GetModel())
 	mdl:SetFOV(50)
+	-- Brighten the scene so weapons show their real texture, not a black blob.
+	mdl:SetAmbientLight(Color(150, 150, 150))
+	mdl:SetDirectionalLight(BOX_TOP, Color(230, 230, 230))
+	mdl:SetDirectionalLight(BOX_FRONT, Color(220, 220, 220))
 
 	mdl.camYaw    = -35
 	mdl.camPitch  = 8
@@ -226,8 +260,39 @@ local function BuildPreview(parent)
 
 		wentity:SetRenderOrigin(pos)
 		wentity:SetRenderAngles(ang)
-		wentity:SetModelScale(e.scale or 1, 0)
+
+		local baseScale = e.scale or 1
+
+		-- Stencil outline: mark the real weapon's pixels, then draw a slightly
+		-- enlarged flat-white model ONLY where the weapon isn't — a clean white
+		-- contour so dark weapons stay visible on the dark background.
+		render.SetStencilEnable(true)
+		render.SetStencilWriteMask(0xFF)
+		render.SetStencilTestMask(0xFF)
+		render.SetStencilReferenceValue(1)
+		render.SetStencilCompareFunction(STENCIL_ALWAYS)
+		render.SetStencilPassOperation(STENCIL_REPLACE)
+		render.SetStencilFailOperation(STENCIL_KEEP)
+		render.SetStencilZFailOperation(STENCIL_KEEP)
+		render.ClearStencil()
+
+		-- 1) Real weapon (writes stencil = 1, normal colour + depth).
+		wentity:SetModelScale(baseScale, 0)
 		wentity:DrawModel()
+
+		-- 2) White contour where stencil != 1 (i.e. just outside the weapon).
+		render.SetStencilCompareFunction(STENCIL_NOTEQUAL)
+		render.SetStencilPassOperation(STENCIL_KEEP)
+		render.MaterialOverride(OUTLINE_MAT)
+		render.OverrideDepthEnable(true, false)
+		wentity:SetModelScale(baseScale * 1.08, 0)
+		wentity:DrawModel()
+		render.OverrideDepthEnable(false, false)
+		render.MaterialOverride(nil)
+
+		render.SetStencilEnable(false)
+
+		wentity:SetModelScale(baseScale, 0)
 		wentity:SetRenderOrigin()
 		wentity:SetRenderAngles()
 	end
@@ -238,8 +303,8 @@ local function BuildPreview(parent)
 
 	-- Hint overlay.
 	mdl.PaintOver = function(self, w, h)
-		draw.SimpleText("Drag: rotate   •   Wheel: zoom   •   Right-drag: height",
-			"WH_FontSmall", w / 2, h - 14, COL.textDim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+		draw.SimpleText("Glisser : tourner   •   Molette : zoom   •   Clic droit : hauteur",
+			"WH_FontSmall", w / 2, h - 16, COL.textDim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 	end
 
 	return mdl
@@ -265,7 +330,7 @@ local function BuildRow(parent, class, onClick)
 		draw.SimpleText(class, "WH_FontSmall", 10, 23, COL.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
 
 		-- Custom / Auto badge.
-		local txt = custom and "CUSTOM" or "AUTO"
+		local txt = custom and "PERSO" or "AUTO"
 		local col = custom and COL.good or COL.accent
 		surface.SetFont("WH_FontBadge")
 		local tw = surface.GetTextSize(txt)
@@ -289,8 +354,10 @@ function M.Open()
 
 	local frame = vgui.Create("DFrame")
 	M.Frame = frame
-	local W, H = math.min(1120, ScrW() - 80), math.min(680, ScrH() - 80)
+	local W, H = math.min(1500, ScrW() - 40), math.min(880, ScrH() - 40)
 	frame:SetSize(W, H)
+	frame:SetMinWidth(1000)
+	frame:SetMinHeight(620)
 	frame:Center()
 	frame:SetTitle("")
 	frame:SetDraggable(true)
@@ -300,17 +367,18 @@ function M.Open()
 
 	function frame:Paint(w, h)
 		RoundBox(0, 0, w, h, COL.bg, 8)
-		RoundBox(0, 0, w, 44, COL.bar, 8)
-		draw.RoundedBoxEx(0, 0, 30, w, 14, COL.bar, false, false, false, false)
-		draw.SimpleText("WEAPON HOLSTER", "WH_Title", 16, 22, COL.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-		draw.SimpleText("v" .. WH.Version, "WH_FontSmall", 16 + surface.GetTextSize("WEAPON HOLSTER") + 178, 24, COL.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+		RoundBox(0, 0, w, 50, COL.bar, 8)
+		draw.RoundedBoxEx(0, 0, 34, w, 16, COL.bar, false, false, false, false)
+		draw.SimpleText("HOLSTER D'ARMES", "WH_Title", 18, 25, COL.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+		local tw = surface.GetTextSize("HOLSTER D'ARMES")
+		draw.SimpleText("v" .. WH.Version, "WH_FontSmall", 18 + tw + 12, 27, COL.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 	end
 
 	local close = StyledButton(frame, "✕", COL.bar)
-	close:SetSize(30, 26)
+	close:SetSize(34, 30)
 	close.DoClick = function() frame:Close() end
 	frame.PerformLayout = function(self, w, h)
-		if IsValid(close) then close:SetPos(w - 38, 9) end
+		if IsValid(close) then close:SetPos(w - 42, 10) end
 	end
 
 	frame.OnClose = function()
@@ -329,7 +397,7 @@ function M.Open()
 	-- Body container below the title bar.
 	local body = vgui.Create("DPanel", frame)
 	body:Dock(FILL)
-	body:DockMargin(8, 48, 8, 8)
+	body:DockMargin(8, 56, 8, 8)
 	body.Paint = function() end
 
 	----------------------------------------------------------------------------
@@ -337,21 +405,21 @@ function M.Open()
 	----------------------------------------------------------------------------
 	local left = vgui.Create("DPanel", body)
 	left:Dock(LEFT)
-	left:SetWide(300)
+	left:SetWide(340)
 	left:DockMargin(0, 0, 8, 0)
 	left.Paint = function(_, w, h) RoundBox(0, 0, w, h, COL.panel, 6) end
 
 	local search = vgui.Create("DTextEntry", left)
 	search:Dock(TOP)
 	search:DockMargin(8, 8, 8, 4)
-	search:SetTall(28)
-	search:SetPlaceholderText("Search weapons…")
+	search:SetTall(30)
+	search:SetPlaceholderText("Rechercher une arme…")
 	search:SetUpdateOnType(true)
 
 	local showAll = vgui.Create("DCheckBoxLabel", left)
 	showAll:Dock(TOP)
 	showAll:DockMargin(10, 2, 8, 4)
-	showAll:SetText("Show every registered weapon")
+	showAll:SetText("Afficher toutes les armes")
 	showAll:SetTextColor(COL.textDim)
 	showAll:SetValue(false)
 
@@ -399,7 +467,7 @@ function M.Open()
 			l:SetTall(30)
 			l:SetContentAlignment(5)
 			l:SetTextColor(COL.textDim)
-			l:SetText("No weapons found.")
+			l:SetText("Aucune arme trouvée.")
 		end
 	end
 
@@ -407,10 +475,10 @@ function M.Open()
 	showAll.OnChange = repopulate
 
 	-- Quick action: edit the weapon currently in hands.
-	local quick = StyledButton(left, "Edit held weapon", COL.accentD)
+	local quick = StyledButton(left, "Éditer l'arme en main", COL.accentD)
 	quick:Dock(BOTTOM)
 	quick:DockMargin(8, 4, 8, 8)
-	quick:SetTall(30)
+	quick:SetTall(32)
 	quick.DoClick = function()
 		local wep = LocalPlayer():GetActiveWeapon()
 		if IsValid(wep) then
@@ -440,7 +508,7 @@ function M.Open()
 	emptyHint:SetContentAlignment(5)
 	emptyHint:SetTextColor(COL.textDim)
 	emptyHint:SetFont("WH_Font")
-	emptyHint:SetText("← Select a weapon to position it")
+	emptyHint:SetText("← Sélectionne une arme à positionner")
 	emptyHint:SetMouseInputEnabled(false)
 
 	----------------------------------------------------------------------------
@@ -448,102 +516,103 @@ function M.Open()
 	----------------------------------------------------------------------------
 	local right = vgui.Create("DPanel", body)
 	right:Dock(RIGHT)
-	right:SetWide(310)
+	right:SetWide(360)
 	right.Paint = function(_, w, h) RoundBox(0, 0, w, h, COL.panel, 6) end
 
 	local rscroll = vgui.Create("DScrollPanel", right)
 	rscroll:Dock(FILL)
-	rscroll:DockMargin(10, 10, 6, 10)
+	rscroll:DockMargin(12, 12, 6, 12)
 
 	-- Title of the selected weapon.
 	local selTitle = rscroll:Add("DLabel")
 	selTitle:Dock(TOP)
-	selTitle:SetTall(24)
+	selTitle:SetTall(28)
 	selTitle:SetFont("WH_Title")
 	selTitle:SetTextColor(COL.text)
-	selTitle:SetText("No weapon selected")
+	selTitle:SetText("Aucune arme sélectionnée")
 
 	local editorPanel = rscroll:Add("DPanel")
 	editorPanel:Dock(TOP)
-	editorPanel:DockMargin(0, 4, 0, 0)
-	editorPanel:SetTall(640)
+	editorPanel:DockMargin(0, 6, 0, 0)
+	editorPanel:SetTall(720)
 	editorPanel.Paint = function() end
 	editorPanel:SetVisible(false)
 
 	-- Slot preset dropdown.
-	SectionLabel(editorPanel, "Slot preset")
+	SectionLabel(editorPanel, "Emplacement prédéfini")
 	local slotBox = vgui.Create("DComboBox", editorPanel)
 	slotBox:Dock(TOP)
 	slotBox:DockMargin(0, 0, 0, 2)
-	slotBox:SetTall(26)
+	slotBox:SetTall(28)
 	slotBox:SetTextColor(COL.text)
 	for _, slotName in ipairs(WH.SlotOrder) do
 		slotBox:AddChoice(WH.Slots[slotName].label, slotName)
 	end
 
 	-- Bone dropdown.
-	SectionLabel(editorPanel, "Bone")
+	SectionLabel(editorPanel, "Os (bone)")
 	local boneBox = vgui.Create("DComboBox", editorPanel)
 	boneBox:Dock(TOP)
 	boneBox:DockMargin(0, 0, 0, 2)
-	boneBox:SetTall(26)
+	boneBox:SetTall(28)
 	boneBox:SetTextColor(COL.text)
 	for _, b in ipairs(WH.PlayerBones) do
 		boneBox:AddChoice(b, b)
 	end
 
 	-- Model field + auto toggle.
-	SectionLabel(editorPanel, "Model  (empty = auto-detect)")
+	SectionLabel(editorPanel, "Modèle  (vide = détection auto)")
 	local modelEntry = vgui.Create("DTextEntry", editorPanel)
 	modelEntry:Dock(TOP)
 	modelEntry:DockMargin(0, 0, 0, 2)
-	modelEntry:SetTall(24)
+	modelEntry:SetTall(26)
 	modelEntry:SetPlaceholderText("auto")
 
 	-- Position / angle / scale sliders. Setters guard against a nil entry
 	-- because DNumSlider:SetValue fires OnValueChanged during construction.
+	-- Finer decimals + −/+ nudge buttons give precise control over placement.
 	SectionLabel(editorPanel, "Position")
-	local sPosX = SliderRow(editorPanel, "X", -25, 25, 2,
+	local sPosX = SliderRow(editorPanel, "X", -30, 30, 2, 0.25,
 		function() return M.currentEntry and M.currentEntry.pos.x end,
 		function(v) if M.currentEntry then M.currentEntry.pos.x = v end end)
-	local sPosY = SliderRow(editorPanel, "Y", -25, 25, 2,
+	local sPosY = SliderRow(editorPanel, "Y", -30, 30, 2, 0.25,
 		function() return M.currentEntry and M.currentEntry.pos.y end,
 		function(v) if M.currentEntry then M.currentEntry.pos.y = v end end)
-	local sPosZ = SliderRow(editorPanel, "Z", -25, 25, 2,
+	local sPosZ = SliderRow(editorPanel, "Z", -30, 30, 2, 0.25,
 		function() return M.currentEntry and M.currentEntry.pos.z end,
 		function(v) if M.currentEntry then M.currentEntry.pos.z = v end end)
 
 	SectionLabel(editorPanel, "Angle")
-	local sAngP = SliderRow(editorPanel, "Pitch", -180, 180, 1,
+	local sAngP = SliderRow(editorPanel, "Tangage", -180, 180, 2, 1,
 		function() return M.currentEntry and M.currentEntry.ang.p end,
 		function(v) if M.currentEntry then M.currentEntry.ang.p = v end end)
-	local sAngY = SliderRow(editorPanel, "Yaw", -180, 180, 1,
+	local sAngY = SliderRow(editorPanel, "Lacet", -180, 180, 2, 1,
 		function() return M.currentEntry and M.currentEntry.ang.y end,
 		function(v) if M.currentEntry then M.currentEntry.ang.y = v end end)
-	local sAngR = SliderRow(editorPanel, "Roll", -180, 180, 1,
+	local sAngR = SliderRow(editorPanel, "Roulis", -180, 180, 2, 1,
 		function() return M.currentEntry and M.currentEntry.ang.r end,
 		function(v) if M.currentEntry then M.currentEntry.ang.r = v end end)
 
-	SectionLabel(editorPanel, "Scale")
-	local sScale = SliderRow(editorPanel, "Scale", 0.2, 3, 2,
+	SectionLabel(editorPanel, "Échelle")
+	local sScale = SliderRow(editorPanel, "Échelle", 0.2, 3, 2, 0.05,
 		function() return M.currentEntry and M.currentEntry.scale end,
 		function(v) if M.currentEntry then M.currentEntry.scale = v end end)
 
 	-- Action buttons.
-	local btnApply = StyledButton(editorPanel, "Apply & Save", COL.accentD)
+	local btnApply = StyledButton(editorPanel, "Appliquer & Sauvegarder", COL.accentD)
 	btnApply:Dock(TOP)
-	btnApply:DockMargin(0, 12, 0, 4)
-	btnApply:SetTall(32)
+	btnApply:DockMargin(0, 14, 0, 5)
+	btnApply:SetTall(36)
 
-	local btnReset = StyledButton(editorPanel, "Reset to auto", COL.panel2)
+	local btnReset = StyledButton(editorPanel, "Réinitialiser (auto)", COL.panel2)
 	btnReset:Dock(TOP)
-	btnReset:DockMargin(0, 0, 0, 4)
-	btnReset:SetTall(28)
+	btnReset:DockMargin(0, 0, 0, 5)
+	btnReset:SetTall(32)
 
-	local btnDelete = StyledButton(editorPanel, "Delete override", COL.panel2)
+	local btnDelete = StyledButton(editorPanel, "Supprimer la config", COL.panel2)
 	btnDelete:Dock(TOP)
-	btnDelete:DockMargin(0, 0, 0, 4)
-	btnDelete:SetTall(28)
+	btnDelete:DockMargin(0, 0, 0, 5)
+	btnDelete:SetTall(32)
 	btnDelete.Col = COL.panel2
 
 	if not admin then
@@ -558,7 +627,7 @@ function M.Open()
 	local function syncControls()
 		local e = M.currentEntry
 		if not e then return end
-		slotBox:SetValue(WH.Slots[e.slot] and WH.Slots[e.slot].label or "Custom")
+		slotBox:SetValue(WH.Slots[e.slot] and WH.Slots[e.slot].label or "Perso")
 		boneBox:SetValue(e.bone)
 		modelEntry:SetText(e.model or "")
 		sPosX:SetValue(e.pos.x); sPosY:SetValue(e.pos.y); sPosZ:SetValue(e.pos.z)
@@ -657,7 +726,7 @@ function M.Open()
 		M.currentEntry = nil
 		editorPanel:SetVisible(false)
 		emptyHint:SetVisible(true)
-		selTitle:SetText("No weapon selected")
+		selTitle:SetText("Aucune arme sélectionnée")
 		repopulate()
 	end
 
@@ -668,7 +737,7 @@ function M.Open()
 	local cTgl = vgui.Create("DCheckBoxLabel", bottom)
 	cTgl:Dock(LEFT)
 	cTgl:DockMargin(12, 11, 0, 0)
-	cTgl:SetText("Show holsters (me)")
+	cTgl:SetText("Afficher les holsters (moi)")
 	cTgl:SetTextColor(COL.text)
 	cTgl:SetConVar("cl_wh_enabled")
 
@@ -677,7 +746,7 @@ function M.Open()
 		local styleLbl = vgui.Create("DLabel", bottom)
 		styleLbl:Dock(LEFT)
 		styleLbl:DockMargin(24, 0, 6, 0)
-		styleLbl:SetText("Placement:")
+		styleLbl:SetText("Placement :")
 		styleLbl:SetTextColor(COL.textDim)
 		styleLbl:SizeToContents()
 		styleLbl:CenterVertical()
@@ -685,11 +754,11 @@ function M.Open()
 		local styleBox = vgui.Create("DComboBox", bottom)
 		styleBox:Dock(LEFT)
 		styleBox:DockMargin(0, 7, 0, 7)
-		styleBox:SetWide(150)
+		styleBox:SetWide(160)
 		styleBox:SetTextColor(COL.text)
-		styleBox:AddChoice("Back / hip", "back")
-		styleBox:AddChoice("RP (torso)", "rp")
-		styleBox:SetValue(WH.PlacementStyle() == "rp" and "RP (torso)" or "Back / hip")
+		styleBox:AddChoice("Dos / hanche", "back")
+		styleBox:AddChoice("RP (torse)", "rp")
+		styleBox:SetValue(WH.PlacementStyle() == "rp" and "RP (torse)" or "Dos / hanche")
 		styleBox.OnSelect = function(_, _, _, val)
 			net.Start("wh_setting")
 			net.WriteString("wh_placement")
@@ -701,7 +770,7 @@ function M.Open()
 		local mTgl = vgui.Create("DCheckBoxLabel", bottom)
 		mTgl:Dock(LEFT)
 		mTgl:DockMargin(24, 11, 0, 0)
-		mTgl:SetText("System enabled (server)")
+		mTgl:SetText("Système activé (serveur)")
 		mTgl:SetTextColor(COL.text)
 		mTgl:SetChecked(WH.Enabled())
 		mTgl.OnChange = function(_, v)
@@ -715,7 +784,7 @@ function M.Open()
 	local credit = vgui.Create("DLabel", bottom)
 	credit:Dock(RIGHT)
 	credit:DockMargin(0, 0, 12, 0)
-	credit:SetText(admin and "Super Admin" or "Read-only (not admin)")
+	credit:SetText(admin and "Super Admin" or "Lecture seule (non admin)")
 	credit:SetTextColor(admin and COL.good or COL.textDim)
 	credit:SizeToContents()
 	credit:CenterVertical()
@@ -740,11 +809,11 @@ concommand.Add("wh_menu", M.Toggle)
 -- Spawnmenu tool option.
 hook.Add("PopulateToolMenu", "WH_ToolMenu", function()
 	spawnmenu.AddToolMenuOption("Options", "Player", "wh_editor",
-		"Weapon Holsters", "", "", function(panel)
+		"Holster d'armes", "", "", function(panel)
 			panel:ClearControls()
-			panel:CheckBox("Show holsters on players (me)", "cl_wh_enabled")
-			panel:NumSlider("Draw distance", "cl_wh_drawdistance", 0, 4096, 0)
-			local b = panel:Button("Open Holster Editor", "wh_menu")
+			panel:CheckBox("Afficher les holsters sur les joueurs (moi)", "cl_wh_enabled")
+			panel:NumSlider("Distance d'affichage", "cl_wh_drawdistance", 0, 4096, 0)
+			local b = panel:Button("Ouvrir l'éditeur de holster", "wh_menu")
 			b:SetTall(40)
 		end)
 end)
