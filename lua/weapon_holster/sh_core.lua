@@ -13,6 +13,11 @@ WH = WH or {}
 -- Per-class saved overrides. Shape: WH.Overrides[class] = entry (see below).
 WH.Overrides = WH.Overrides or {}
 
+-- Classes the admin has hidden for good. WH.Excluded[class] = true. Persisted
+-- server-side, so a deleted weapon never comes back on its own — only if it is
+-- explicitly reconfigured.
+WH.Excluded = WH.Excluded or {}
+
 -- Runtime cache of generated auto entries so we don't rebuild every frame.
 WH.AutoCache = WH.AutoCache or {}
 
@@ -163,6 +168,11 @@ end
 -- Returns an entry (canonical) or nil if the weapon must not be holstered.
 -- `wep` is optional but greatly improves model/hold-type detection.
 function WH.GetPlacement(class, wep)
+	-- 0) Explicitly hidden by an admin -> never holster, never auto-generate.
+	if WH.Excluded[class] then
+		return nil
+	end
+
 	-- 1) Admin-saved override always wins.
 	local override = WH.Overrides[class]
 	if override then

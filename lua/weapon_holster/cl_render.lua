@@ -21,23 +21,20 @@ WH.Preview = WH.Preview or nil
 -- Receive synced overrides from the server
 --------------------------------------------------------------------------------
 net.Receive("wh_sync", function()
-	local tbl = net.ReadTable()
+	local tbl  = net.ReadTable()
+	local excl = net.ReadTable()
+
 	WH.Overrides = {}
 	for class, data in pairs(tbl) do
 		local entry = WH.Normalize(data)
 		if entry then WH.Overrides[class] = entry end
 	end
-	WH.ClearAutoCache()
-end)
 
-net.Receive("wh_update", function()
-	local class  = net.ReadString()
-	local exists = net.ReadBool()
-	if exists then
-		WH.Overrides[class] = WH.Normalize(net.ReadTable())
-	else
-		WH.Overrides[class] = nil
+	WH.Excluded = {}
+	for class, v in pairs(excl or {}) do
+		if v then WH.Excluded[class] = true end
 	end
+
 	WH.ClearAutoCache()
 end)
 

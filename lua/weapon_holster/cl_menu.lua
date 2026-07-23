@@ -184,15 +184,31 @@ local function BuildPreview(parent)
 	mdl.camTarget = Vector(0, 0, 38)
 	mdl.idleSeq   = nil
 
+	mdl.tpose = false
+
 	-- Disable the built-in auto-spin; drive our own orbit camera.
 	function mdl:LayoutEntity(ent)
-		if not self.idleSeq then
-			self.idleSeq = ent:LookupSequence("idle_all_01")
-			if self.idleSeq < 0 then self.idleSeq = ent:LookupSequence("idle") end
-			if self.idleSeq < 0 then self.idleSeq = 0 end
+		if self.tpose then
+			-- Freeze on the reference/bind pose so the admin can work around a
+			-- still model instead of a breathing idle.
+			if not self.refSeq then
+				local s = ent:LookupSequence("reference")
+				if s < 0 then s = ent:LookupSequence("ragdoll") end
+				if s < 0 then s = 0 end
+				self.refSeq = s
+			end
+			ent:SetSequence(self.refSeq)
+			ent:SetCycle(0)
+			ent:SetPlaybackRate(0)
+		else
+			if not self.idleSeq then
+				self.idleSeq = ent:LookupSequence("idle_all_01")
+				if self.idleSeq < 0 then self.idleSeq = ent:LookupSequence("idle") end
+				if self.idleSeq < 0 then self.idleSeq = 0 end
+			end
+			ent:SetSequence(self.idleSeq)
+			self:RunAnimation()
 		end
-		ent:SetSequence(self.idleSeq)
-		self:RunAnimation()
 
 		local dir = Angle(self.camPitch, self.camYaw, 0):Forward()
 		self:SetCamPos(self.camTarget - dir * self.camDist)
@@ -321,21 +337,28 @@ local function BuildRow(parent, class, onClick)
 	row:SetText("")
 
 	function row:Paint(w, h)
+		local hidden = WH.Excluded[class] == true
 		local custom = WH.Overrides[class] ~= nil
 		local sel = (M.currentClass == class)
 		local bg = sel and COL.accentD or (self:IsHovered() and COL.hover or COL.panel2)
 		RoundBox(0, 0, w, h, bg, 5)
 
-		draw.SimpleText(WH.PrettyName(class), "WH_Font", 10, 8, COL.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+		draw.SimpleText(WH.PrettyName(class), "WH_Font", 10, 8, hidden and COL.textDim or COL.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
 		draw.SimpleText(class, "WH_FontSmall", 10, 23, COL.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
 
-		-- Custom / Auto badge.
-		local txt = custom and "PERSO" or "AUTO"
-		local col = custom and COL.good or COL.accent
+		-- Status badge: hidden > custom > auto.
+		local txt, col, back
+		if hidden then
+			txt, col, back = "MASQUÉ", COL.bad, Color(226, 92, 92, 45)
+		elseif custom then
+			txt, col, back = "PERSO", COL.good, COL.badgeA
+		else
+			txt, col, back = "AUTO", COL.accent, COL.badge
+		end
 		surface.SetFont("WH_FontBadge")
 		local tw = surface.GetTextSize(txt)
 		local bw = tw + 14
-		RoundBox(w - bw - 8, h / 2 - 9, bw, 18, custom and COL.badgeA or COL.badge, 9)
+		RoundBox(w - bw - 8, h / 2 - 9, bw, 18, back, 9)
 		draw.SimpleText(txt, "WH_FontBadge", w - bw / 2 - 8, h / 2, col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 	end
 
@@ -445,10 +468,12 @@ function M.Open()
 			end
 		end
 
-		-- Filter + sort.
+		-- Filter + sort. Hidden weapons are kept out of the list unless the admin
+		-- ticks "show every weapon" (so they can be brought back).
+		local showHidden = showAll:GetChecked()
 		local list = {}
 		for class in pairs(set) do
-			if not WH.ClassBlacklist[class] then
+			if not WH.ClassBlacklist[class] and (showHidden or not WH.Excluded[class]) then
 				local name = string.lower(WH.PrettyName(class))
 				if q == "" or string.find(name, q, 1, true) or string.find(string.lower(class), q, 1, true) then
 					list[#list + 1] = class
@@ -496,12 +521,41 @@ function M.Open()
 	center:DockMargin(0, 0, 8, 0)
 	center.Paint = function(_, w, h) RoundBox(0, 0, w, h, COL.panel, 6) end
 
+	-- Top bar of the preview: view options.
+	local vbar = vgui.Create("DPanel", center)
+	vbar:Dock(TOP)
+	vbar:DockMargin(6, 6, 6, 0)
+	vbar:SetTall(32)
+	vbar.Paint = function() end
+
 	local previewHolder = vgui.Create("DPanel", center)
 	previewHolder:Dock(FILL)
 	previewHolder:DockMargin(6, 6, 6, 6)
 	previewHolder.Paint = function(_, w, h) RoundBox(0, 0, w, h, Color(15, 16, 20), 6) end
 
 	local preview = BuildPreview(previewHolder)
+
+	-- T-pose toggle: freeze the model on its reference pose to work around it.
+	local tposeBtn = StyledButton(vbar, "T-pose : OFF", COL.panel2)
+	tposeBtn:Dock(LEFT)
+	tposeBtn:SetWide(150)
+	tposeBtn.DoClick = function()
+		preview.tpose = not preview.tpose
+		tposeBtn.Text = preview.tpose and "T-pose : ON" or "T-pose : OFF"
+	end
+	-- StyledButton paints a fixed caption, so repaint from a dynamic field.
+	tposeBtn.Text = "T-pose : OFF"
+	tposeBtn.Paint = function(self, w, h)
+		local c = self:IsHovered() and COL.hover or (preview.tpose and COL.accentD or COL.panel2)
+		RoundBox(0, 0, w, h, c, 5)
+		draw.SimpleText(self.Text, "WH_Font", w / 2, h / 2, COL.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+	end
+
+	local viewHint = vgui.Create("DLabel", vbar)
+	viewHint:Dock(FILL)
+	viewHint:DockMargin(12, 0, 0, 0)
+	viewHint:SetTextColor(COL.textDim)
+	viewHint:SetText("Astuce : passe en T-pose pour placer les armes sur les bras/épaules.")
 
 	local emptyHint = vgui.Create("DLabel", previewHolder)
 	emptyHint:Dock(FILL)
@@ -609,11 +663,11 @@ function M.Open()
 	btnReset:DockMargin(0, 0, 0, 5)
 	btnReset:SetTall(32)
 
-	local btnDelete = StyledButton(editorPanel, "Supprimer la config", COL.panel2)
+	local btnDelete = StyledButton(editorPanel, "Supprimer définitivement", COL.panel2)
 	btnDelete:Dock(TOP)
 	btnDelete:DockMargin(0, 0, 0, 5)
 	btnDelete:SetTall(32)
-	btnDelete.Col = COL.panel2
+	btnDelete.Col = Color(120, 50, 50)
 
 	if not admin then
 		btnApply:SetEnabled(false)
@@ -698,13 +752,15 @@ function M.Open()
 		repopulate()
 	end
 
+	-- Reset to automatic placement (drops the custom config AND un-hides).
 	btnReset.DoClick = function()
 		if not M.currentClass then return end
-		net.Start("wh_delete")
+		net.Start("wh_reset")
 		net.WriteString(M.currentClass)
 		net.SendToServer()
 
 		WH.Overrides[M.currentClass] = nil
+		WH.Excluded[M.currentClass] = nil
 		WH.ClearAutoCache()
 		local auto = WH.BuildAutoEntry(M.currentClass) or WH.NewEntry()
 		M.currentEntry = cloneEntry(auto)
@@ -714,20 +770,33 @@ function M.Open()
 		repopulate()
 	end
 
+	-- Delete for good: hide the weapon so it no longer holsters and disappears
+	-- from the list until it is explicitly reconfigured.
 	btnDelete.DoClick = function()
 		if not M.currentClass then return end
-		net.Start("wh_delete")
-		net.WriteString(M.currentClass)
-		net.SendToServer()
-		WH.Overrides[M.currentClass] = nil
-		WH.ClearAutoCache()
-		WH.Preview = nil
-		M.currentClass = nil
-		M.currentEntry = nil
-		editorPanel:SetVisible(false)
-		emptyHint:SetVisible(true)
-		selTitle:SetText("Aucune arme sélectionnée")
-		repopulate()
+		local class = M.currentClass
+
+		Derma_Query(
+			"Supprimer définitivement le holster de « " .. WH.PrettyName(class) .. " » ?\nL'arme ne sera plus affichée tant qu'elle n'est pas reconfigurée.",
+			"Confirmation",
+			"Supprimer", function()
+				net.Start("wh_hide")
+				net.WriteString(class)
+				net.SendToServer()
+
+				WH.Overrides[class] = nil
+				WH.Excluded[class] = true
+				WH.ClearAutoCache()
+				WH.Preview = nil
+				M.currentClass = nil
+				M.currentEntry = nil
+				editorPanel:SetVisible(false)
+				emptyHint:SetVisible(true)
+				selTitle:SetText("Aucune arme sélectionnée")
+				repopulate()
+			end,
+			"Annuler", function() end
+		)
 	end
 
 	----------------------------------------------------------------------------
@@ -778,6 +847,34 @@ function M.Open()
 			net.WriteString("wh_enabled")
 			net.WriteString(v and "1" or "0")
 			net.SendToServer()
+		end
+
+		-- Global wipe: delete EVERY placement (even configured ones) + un-hide.
+		local wipe = StyledButton(bottom, "Supprimer toute la config", Color(120, 50, 50))
+		wipe:Dock(RIGHT)
+		wipe:DockMargin(0, 7, 8, 7)
+		wipe:SetWide(210)
+		wipe.DoClick = function()
+			Derma_Query(
+				"Supprimer TOUTE la configuration des holsters ?\nToutes les armes (y compris configurées et masquées) seront réinitialisées.",
+				"Confirmation",
+				"Tout supprimer", function()
+					net.Start("wh_reset_all")
+					net.SendToServer()
+
+					WH.Overrides = {}
+					WH.Excluded = {}
+					WH.ClearAutoCache()
+					WH.Preview = nil
+					M.currentClass = nil
+					M.currentEntry = nil
+					editorPanel:SetVisible(false)
+					emptyHint:SetVisible(true)
+					selTitle:SetText("Aucune arme sélectionnée")
+					repopulate()
+				end,
+				"Annuler", function() end
+			)
 		end
 	end
 
